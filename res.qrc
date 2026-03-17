@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/shaders"/>
+    <qresource prefix="/images">
+        <file>images/11.jpg</file>
+        <file>images/44.jpg</file>
+        <file>images/CAI.jpg</file>
+        <file>images/22.jpg</file>
+        <file>images/33.jpg</file>
+    </qresource>
+    <qresource prefix="/">
+        <file>shaders/grid.frag</file>
+        <file>shaders/grid.vert</file>
+        <file>shaders/shapes.frag</file>
+        <file>shaders/shapes.vert</file>
+    </qresource>
+</RCC>
