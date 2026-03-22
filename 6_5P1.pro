@@ -1,7 +1,6 @@
 QT       += core gui
 QT       += openglwidgets
 QT       += charts
-QT       += qml
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++17
