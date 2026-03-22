@@ -1,6 +1,4 @@
 #include "drawmodel.h"
-#include <QJSEngine>
-#include <QJSValue>
 #include <QLabel>
 #include <QMessageBox>
 #include <QRegularExpression>
@@ -8,7 +6,218 @@
 #include <cmath>
 
 namespace {
-const QRegularExpression kParameterRegex(QStringLiteral("(?<![0-9.])[A-Za-z_][A-Za-z0-9_]*\\b"));
+const QRegularExpression kParameterRegex(QStringLiteral("(?<![0-9.])[A-Za-z_][A-Za-z0-9_]*\b"));
+
+class ExpressionParser
+{
+public:
+    ExpressionParser(const QString &expression,
+                     const QMap<QString, double> &parameterValues,
+                     QString &errorMessage)
+        : m_expression(expression)
+        , m_parameterValues(parameterValues)
+        , m_errorMessage(errorMessage)
+    {
+    }
+
+    bool parse(double &result)
+    {
+        m_pos = 0;
+        if (!parseExpression(result)) {
+            return false;
+        }
+        skipSpaces();
+        if (m_pos != m_expression.size()) {
+            m_errorMessage = QObject::tr("存在无法识别的字符：%1").arg(m_expression.mid(m_pos));
+            return false;
+        }
+        return true;
+    }
+
+private:
+    bool parseExpression(double &result)
+    {
+        if (!parseTerm(result)) {
+            return false;
+        }
+
+        while (true) {
+            skipSpaces();
+            if (match('+')) {
+                double rhs = 0.0;
+                if (!parseTerm(rhs)) {
+                    return false;
+                }
+                result += rhs;
+            } else if (match('-')) {
+                double rhs = 0.0;
+                if (!parseTerm(rhs)) {
+                    return false;
+                }
+                result -= rhs;
+            } else {
+                break;
+            }
+        }
+        return true;
+    }
+
+    bool parseTerm(double &result)
+    {
+        if (!parseFactor(result)) {
+            return false;
+        }
+
+        while (true) {
+            skipSpaces();
+            if (match('*')) {
+                double rhs = 0.0;
+                if (!parseFactor(rhs)) {
+                    return false;
+                }
+                result *= rhs;
+            } else if (match('/')) {
+                double rhs = 0.0;
+                if (!parseFactor(rhs)) {
+                    return false;
+                }
+                if (qFuzzyIsNull(rhs)) {
+                    m_errorMessage = QObject::tr("除数不能为 0");
+                    return false;
+                }
+                result /= rhs;
+            } else {
+                break;
+            }
+        }
+        return true;
+    }
+
+    bool parseFactor(double &result)
+    {
+        skipSpaces();
+        if (match('+')) {
+            return parseFactor(result);
+        }
+        if (match('-')) {
+            if (!parseFactor(result)) {
+                return false;
+            }
+            result = -result;
+            return true;
+        }
+        if (match('(')) {
+            if (!parseExpression(result)) {
+                return false;
+            }
+            skipSpaces();
+            if (!match(')')) {
+                m_errorMessage = QObject::tr("缺少右括号 )");
+                return false;
+            }
+            return true;
+        }
+        if (parseNumber(result)) {
+            return true;
+        }
+        if (parseIdentifier(result)) {
+            return true;
+        }
+
+        m_errorMessage = QObject::tr("表达式语法错误");
+        return false;
+    }
+
+    bool parseNumber(double &result)
+    {
+        skipSpaces();
+        int start = m_pos;
+        bool hasDigit = false;
+        bool hasDot = false;
+
+        while (m_pos < m_expression.size()) {
+            const QChar ch = m_expression.at(m_pos);
+            if (ch.isDigit()) {
+                hasDigit = true;
+                ++m_pos;
+            } else if (ch == '.' && !hasDot) {
+                hasDot = true;
+                ++m_pos;
+            } else {
+                break;
+            }
+        }
+
+        if (!hasDigit) {
+            m_pos = start;
+            return false;
+        }
+
+        bool ok = false;
+        const QString numberText = m_expression.mid(start, m_pos - start);
+        result = numberText.toDouble(&ok);
+        if (!ok) {
+            m_errorMessage = QObject::tr("数字无效：%1").arg(numberText);
+            return false;
+        }
+        return true;
+    }
+
+    bool parseIdentifier(double &result)
+    {
+        skipSpaces();
+        if (m_pos >= m_expression.size()) {
+            return false;
+        }
+
+        const QChar first = m_expression.at(m_pos);
+        if (!(first.isLetter() || first == '_')) {
+            return false;
+        }
+
+        const int start = m_pos;
+        ++m_pos;
+        while (m_pos < m_expression.size()) {
+            const QChar ch = m_expression.at(m_pos);
+            if (ch.isLetterOrNumber() || ch == '_') {
+                ++m_pos;
+            } else {
+                break;
+            }
+        }
+
+        const QString identifier = m_expression.mid(start, m_pos - start);
+        if (!m_parameterValues.contains(identifier)) {
+            m_errorMessage = QObject::tr("缺少参数：%1").arg(identifier);
+            return false;
+        }
+
+        result = m_parameterValues.value(identifier);
+        return true;
+    }
+
+    bool match(QChar expected)
+    {
+        skipSpaces();
+        if (m_pos < m_expression.size() && m_expression.at(m_pos) == expected) {
+            ++m_pos;
+            return true;
+        }
+        return false;
+    }
+
+    void skipSpaces()
+    {
+        while (m_pos < m_expression.size() && m_expression.at(m_pos).isSpace()) {
+            ++m_pos;
+        }
+    }
+
+    QString m_expression;
+    const QMap<QString, double> &m_parameterValues;
+    QString &m_errorMessage;
+    int m_pos = 0;
+};
 }
 
 DrawModel::BoxParams DrawModel::getBoxParams(QWidget *parent, bool *accepted)
@@ -124,22 +333,10 @@ bool DrawModel::evaluateExpression(const QString &expression,
         return false;
     }
 
-    QJSEngine engine;
-    for (auto it = parameterValues.constBegin(); it != parameterValues.constEnd(); ++it) {
-        engine.globalObject().setProperty(it.key(), it.value());
-    }
-
-    QJSValue jsResult = engine.evaluate(trimmedExpression);
-    if (jsResult.isError()) {
-        errorMessage = jsResult.toString();
+    ExpressionParser parser(trimmedExpression, parameterValues, errorMessage);
+    if (!parser.parse(result)) {
         return false;
     }
-    if (!jsResult.isNumber()) {
-        errorMessage = QObject::tr("结果不是有效数字");
-        return false;
-    }
-
-    result = jsResult.toNumber();
     if (!std::isfinite(result)) {
         errorMessage = QObject::tr("结果不是有限数字");
         return false;
@@ -154,12 +351,10 @@ BoxParamsDialog::BoxParamsDialog(QWidget *parent)
 
     QFormLayout *formLayout = new QFormLayout(this);
 
-    // 名称输入
     m_nameEdit = new QLineEdit(this);
     m_nameEdit->setPlaceholderText(tr("Enter box name"));
     formLayout->addRow(tr("Name:"), m_nameEdit);
 
-    // 坐标范围输入
     m_xminEdit = new QLineEdit(this);
     m_xminEdit->setPlaceholderText(tr("Minimum X / expression"));
     formLayout->addRow(tr("X min:"), m_xminEdit);
@@ -184,7 +379,6 @@ BoxParamsDialog::BoxParamsDialog(QWidget *parent)
     m_zmaxEdit->setPlaceholderText(tr("Maximum Z / expression"));
     formLayout->addRow(tr("Z max:"), m_zmaxEdit);
 
-    // 材料选择
     m_materialCombo = new QComboBox(this);
     m_materialCombo->addItem(tr("Metal"), METAL);
     m_materialCombo->addItem(tr("Dielectric 1"), DIELECTRIC1);
@@ -195,7 +389,6 @@ BoxParamsDialog::BoxParamsDialog(QWidget *parent)
     m_materialCombo->addItem(tr("Vacuum"), VACUUM);
     formLayout->addRow(tr("Material:"), m_materialCombo);
 
-    // 按钮
     QDialogButtonBox *buttonBox = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
