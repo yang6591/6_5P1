@@ -215,24 +215,27 @@ MainWindow::MainWindow(QWidget* parent)
     QMenu *drawsubMenu = mmModel->addMenu("draw");
     QAction* drawBox=drawsubMenu->addAction("Box");
     connect(drawBox, &QAction::triggered, [=]() {
-        DrawModel::BoxParams params = DrawModel::getBoxParams(this);
-        if (!params.name.isEmpty()) {
-            // 创建长方体
-            int modelId = glWidget->createBox(
-                params.name,
-                params.xmin, params.xmax,
-                params.ymin, params.ymax,
-                params.zmin, params.zmax,
-                static_cast<openglwidget::MaterialType>(params.materialType)
-                );
+        bool accepted = false;
+        DrawModel::BoxParams params = DrawModel::getBoxParams(this, &accepted);
+        if (!accepted || params.name.isEmpty()) {
+            return;
+        }
 
-            if (modelId != -1) {
-                // 在导航树中添加条目
-                QTreeWidgetItem* boxItem = new QTreeWidgetItem(m_compGroup1);
-                boxItem->setText(0, params.name);
-                m_compGroup1->setExpanded(true);
-                m_treeItemToModelId[boxItem] = modelId;
-            }
+        // 创建长方体
+        int modelId = glWidget->createBox(
+            params.name,
+            params.xmin, params.xmax,
+            params.ymin, params.ymax,
+            params.zmin, params.zmax,
+            static_cast<openglwidget::MaterialType>(params.materialType)
+            );
+
+        if (modelId != -1) {
+            // 在导航树中添加条目
+            QTreeWidgetItem* boxItem = new QTreeWidgetItem(m_compGroup1);
+            boxItem->setText(0, params.name);
+            m_compGroup1->setExpanded(true);
+            m_treeItemToModelId[boxItem] = modelId;
         }
     });
     QAction* drawSphere=drawsubMenu->addAction("Sphere");
